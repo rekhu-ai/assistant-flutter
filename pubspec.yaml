@@ -1,0 +1,19 @@
+name: rekhu_assistant
+description: Rekhu Assistant for Flutter. A chat in your app that answers from your help and acts through your own back end, with a ready chat widget or a client for your own design.
+version: 0.1.0
+homepage: https://rekhu.com/products
+repository: https://github.com/rekhu-ai/assistant-flutter
+
+environment:
+  sdk: ^3.5.0
+  flutter: ">=3.24.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0

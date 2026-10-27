@@ -98,7 +98,7 @@ final client = RekhuAssistantClient(
 );
 ```
 
-The client sends an anonymous id per install as `X-Rekhu-Visitor`. Visitors reach only the actions you marked for guests, the pages that need no login, and the help, within the caps your back end sets. In Laravel, turn it on with `REKHU_ASSISTANT_GUESTS=true` and give the route your API middleware with `REKHU_ASSISTANT_GUEST_MIDDLEWARE=api`.
+The client sends an anonymous id per install as `X-Rekhu-Visitor`. Visitors reach only the actions you marked for guests, the pages that need no login, and the help, within the caps your back end sets. In Laravel, turn it on with `REKHU_ASSISTANT_GUESTS=true` and give the route your API middleware with `REKHU_ASSISTANT_GUEST_MIDDLEWARE=api`; the [Laravel package's guide](https://github.com/rekhu-ai/assistant-laravel#from-a-flutter-app-or-another-api-client) lists what a 404, 419 or 422 means. In Node.js, the public chat is the `visitor/chat` route next to the signed-in one.
 
 ## Pages and actions
 

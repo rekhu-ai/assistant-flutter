@@ -10,6 +10,8 @@ Your Flutter app talks to **your own back end**, where a Rekhu server package (`
 
 One dependency: `http`. iOS, Android, web, macOS, Windows and Linux.
 
+> **Start free.** [Create a Rekhu account](https://rekhu.com/register?ref=assistant-flutter) and get **$10 credit** to try it, no card needed. After that you top up from $10 under **Billing**: no subscription, and unused credit never expires. [rekhu.com](https://rekhu.com) · [Docs](https://rekhu.com/docs) · [Pricing](https://rekhu.com/pricing)
+
 ## Contents
 
 - [How it works](#how-it-works)
@@ -45,7 +47,7 @@ flutter pub add rekhu_assistant
 
 ## Your back end
 
-Install the server package there first and add your secret key (`agk_…`); its README walks through it:
+Install the server package there first and add your secret key (`agk_…`); its README walks through it. The key comes from your Rekhu account: [create one](https://rekhu.com/register?ref=assistant-flutter) (it starts with $10 credit, no card needed), add a project under **Projects → New project** (**Laravel app** or **Node.js app**, whichever your back end is), and add a key on its **Connection** tab.
 
 - Laravel: [`rekhu/assistant-laravel`](https://github.com/rekhu-ai/assistant-laravel)
 - Node.js: [`@rekhu/assistant-node`](https://www.npmjs.com/package/@rekhu/assistant-node)

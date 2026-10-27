@@ -89,11 +89,11 @@ Keep one client for as long as the user is signed in: the conversation goes on w
 
 ## A public chat for visitors
 
-For people who are not signed in (a shop's customers before they log in), point the client at the server package's public route and set `visitor`:
+For people who are not signed in (a shop's customers before they log in), point the client at the server package's public route (the chat's address with `visitor/` before `chat`) and set `visitor`:
 
 ```dart
 final client = RekhuAssistantClient(
-  endpoint: Uri.parse('https://api.example.com/rekhu/assistant/visitor/chat'),
+  endpoint: Uri.parse('https://api.example.com/api/rekhu/assistant/visitor/chat'),
   visitor: true,
 );
 ```

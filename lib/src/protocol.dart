@@ -111,7 +111,7 @@ class RekhuMessage {
 
 /// What the server answers about a conversation (PROTOCOL.md, "GET").
 class RekhuHistory {
-  const RekhuHistory({this.conversation, this.messages = const [], this.greeting, this.quick = const []});
+  const RekhuHistory({this.conversation, this.messages = const [], this.greeting, this.quick = const [], this.history = false});
 
   factory RekhuHistory.fromJson(Map<String, dynamic> json) => RekhuHistory(
         conversation: json['conversation'] as String?,
@@ -121,6 +121,7 @@ class RekhuHistory {
         ],
         greeting: json['greeting'] as String?,
         quick: [for (final q in (json['quick'] as List? ?? const [])) '$q'],
+        history: json['history'] == true,
       );
 
   final String? conversation;
@@ -131,6 +132,52 @@ class RekhuHistory {
 
   /// The developer's quick questions for a fresh chat; a tap sends one as the user's message.
   final List<String> quick;
+
+  /// The user has a list of earlier conversations (signed in); false for the public chat.
+  final bool history;
+}
+
+/// One earlier conversation in the list (PROTOCOL.md, "Conversations").
+class RekhuConversation {
+  const RekhuConversation({required this.id, required this.title, this.scope, this.updatedAt, this.questions = 0});
+
+  factory RekhuConversation.fromJson(Map<String, dynamic> json) => RekhuConversation(
+        id: '${json['id'] ?? ''}',
+        title: '${json['title'] ?? ''}',
+        scope: json['scope'] as String?,
+        updatedAt: DateTime.tryParse('${json['updated_at'] ?? ''}'),
+        questions: (json['questions'] as num?)?.toInt() ?? 0,
+      );
+
+  final String id;
+
+  /// The name the user gave it, else the first thing they asked.
+  final String title;
+
+  /// The chat of its own it belongs to; null for the main chat.
+  final String? scope;
+
+  /// When it last changed.
+  final DateTime? updatedAt;
+
+  /// How many messages the user sent in it.
+  final int questions;
+}
+
+/// One page of the conversations list, newest first; [next] fetches the page after it and is null on the last page.
+class RekhuConversationPage {
+  const RekhuConversationPage({this.items = const [], this.next});
+
+  factory RekhuConversationPage.fromJson(Map<String, dynamic> json) => RekhuConversationPage(
+        items: [
+          for (final c in (json['conversations'] as List? ?? const []))
+            if (c is Map) RekhuConversation.fromJson(Map<String, dynamic>.from(c)),
+        ],
+        next: json['next'] is String && (json['next'] as String).isNotEmpty ? json['next'] as String : null,
+      );
+
+  final List<RekhuConversation> items;
+  final String? next;
 }
 
 /// A call that failed before the answer started: [message] is what to tell the user; [status] the HTTP status.

@@ -22,6 +22,7 @@ One dependency: `http`. iOS, Android, web, macOS, Windows and Linux.
 - [A public chat for visitors](#a-public-chat-for-visitors)
 - [Pages and actions](#pages-and-actions)
 - [Keeping the conversation](#keeping-the-conversation)
+- [Conversation history](#conversation-history)
 - [Make it look like your app](#make-it-look-like-your-app)
 - [Design your own chat](#design-your-own-chat)
 - [Languages](#languages)
@@ -127,7 +128,41 @@ class PrefsStore implements RekhuStore {
 final client = RekhuAssistantClient(endpoint: endpoint, headers: headers, store: PrefsStore(await SharedPreferences.getInstance()));
 ```
 
-The store also keeps a visitor's anonymous id. "New" in the chat (`controller.reset()`) asks the back end to forget the conversation.
+The store also keeps a visitor's anonymous id. "New" in the chat (`controller.newChat()`) starts a new conversation; the old one is not deleted, and a signed-in user finds it again in the [conversation history](#conversation-history).
+
+## Conversation history
+
+A signed-in user can see their earlier conversations, open one and go on in it, rename it and delete it. `RekhuChat` shows this by itself; there is nothing to turn on in the app.
+
+1. **Keep conversations on your back end.** The server package keeps a signed-in user's conversations and tells the app so (`"history": true` in its answer). Check its README for where they are kept and for how long. The public chat for visitors has no history, so the list does not show there.
+2. **Open the chat.** A button with three lines (☰) appears in the chat's bar. It shows or hides the list.
+3. **Use the list.**
+   - **+ New chat** starts a new conversation. The one you were in stays in the list.
+   - **Search** finds conversations by their name or by what the user asked.
+   - Each row shows the name (the first question, until it is renamed), when it last changed (the time for today, the date for older ones) and how many questions it has. The open one is highlighted.
+   - Tap a row to open it. Older conversations load as the user scrolls down.
+   - **⋯** on a row: **Rename** (leave the name empty to go back to the first question) or **Delete** (asks first; a deleted conversation cannot be brought back).
+4. **Screen size.** On a wide screen (720 points and more) the list sits beside the chat and is open at the start. On a phone it covers the chat when opened and closes after a pick. In Arabic it sits on the right.
+
+With `header: false` your own app bar opens the list: `controller.showConversations(true)`.
+
+In a chat of your own design, the controller has the list as state, and the client has the calls:
+
+```dart
+if (chat.history) {
+  await chat.loadConversations(query: 'invoice');   // first page, searched; chat.conversations, chat.conversationsNext
+  await chat.moreConversations();                   // the next page
+  await chat.open(chat.conversations.first.id);     // its messages in chat.items; the next message goes on in it
+  await chat.renameConversation(id, 'Order questions');
+  await chat.deleteConversation(id);
+  await chat.newChat();
+}
+
+final page = await client.conversations(query: 'invoice', limit: 30);  // RekhuConversationPage: items, next
+final more = await client.conversations(before: page.next);
+```
+
+The controller fetches the list again after each answer, so the open conversation moves to the top.
 
 ## Make it look like your app
 
@@ -143,7 +178,7 @@ RekhuChat(client: client, theme: const RekhuChatTheme(accent: Color(0xFF0F766E),
 | `quick` | quick questions for a fresh chat, instead of the server's |
 | `texts` | your own words for the chat's buttons and messages (`RekhuTexts.en.copyWith(...)`) |
 | `theme` | `accent`, `background`, `surface`, `border`, `radius` |
-| `header` | the bar with the name and "New"; off when your screen has its own app bar |
+| `header` | the bar with the name, "New" and the history button; off when your screen has its own app bar |
 | `controller` | share one chat between screens |
 
 ## Design your own chat

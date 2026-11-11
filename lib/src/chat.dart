@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'client.dart';
@@ -42,7 +44,7 @@ class RekhuChat extends StatefulWidget {
   final RekhuTexts? texts;
   final RekhuChatTheme theme;
 
-  /// The bar with the name and "New".
+  /// The bar with the name, "New" and, for a signed-in user, the button that shows the conversations.
   final bool header;
 
   /// The chat in a bottom sheet over the current screen.
@@ -106,7 +108,10 @@ class _RekhuChatState extends State<RekhuChat> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(builder: (context, size) => _build(context, size.maxWidth));
+
+  /// The chat, with the list of conversations beside it on a wide screen or over it on a narrow one.
+  Widget _build(BuildContext context, double width) {
     final theme = Theme.of(context);
     final t = chat.texts;
     final accent = widget.theme.accent ?? theme.colorScheme.primary;
@@ -206,6 +211,8 @@ class _RekhuChatState extends State<RekhuChat> {
         Wrap(spacing: 6, runSpacing: 6, children: [for (final q in chat.quick) ActionChip(label: Text(q), onPressed: () => chat.send(q))]),
     ];
 
+    final wide = width >= 720;
+    final shown = chat.history && (chat.conversationsShown ?? wide);
     final body = Material(
       color: background,
       child: Column(
@@ -213,10 +220,12 @@ class _RekhuChatState extends State<RekhuChat> {
           if (widget.header)
             Container(
               color: accent,
-              padding: const EdgeInsetsDirectional.fromSTEB(16, 10, 8, 10),
+              padding: EdgeInsetsDirectional.fromSTEB(chat.history ? 4 : 16, 10, 8, 10),
               child: Row(children: [
+                if (chat.history)
+                  IconButton(tooltip: t.conversations, onPressed: () => chat.showConversations(!shown), icon: Icon(Icons.menu, color: theme.colorScheme.onPrimary)),
                 Expanded(child: Text(t.name, style: theme.textTheme.titleMedium?.copyWith(color: theme.colorScheme.onPrimary))),
-                TextButton(onPressed: chat.sending ? null : chat.reset, child: Text(t.newChat, style: TextStyle(color: theme.colorScheme.onPrimary))),
+                TextButton(onPressed: chat.sending ? null : chat.newChat, child: Text(t.newChat, style: TextStyle(color: theme.colorScheme.onPrimary))),
               ]),
             ),
           Expanded(
@@ -249,7 +258,201 @@ class _RekhuChatState extends State<RekhuChat> {
       ),
     );
 
-    // the user's language decides the direction: Arabic reads right to left whatever the app's own locale
-    return RekhuTexts.rtl(chat.client.locale) ? Directionality(textDirection: TextDirection.rtl, child: body) : body;
+    final Widget page;
+    if (!shown) {
+      page = body;
+    } else {
+      final list = _RekhuConversations(chat: chat, accent: accent, wrap: _direction, onPicked: wide ? null : () => chat.showConversations(false));
+      page = wide
+          ? Row(children: [SizedBox(width: 280, child: list), VerticalDivider(width: 1, color: border), Expanded(child: body)])
+          : Stack(children: [body, Positioned.fill(child: list)]);
+    }
+    return _direction(page);
+  }
+
+  /// The user's language decides the direction: Arabic reads right to left whatever the app's own locale.
+  Widget _direction(Widget child) => RekhuTexts.rtl(chat.client.locale) ? Directionality(textDirection: TextDirection.rtl, child: child) : child;
+}
+
+/// The list of earlier conversations: new chat, search, rows that open one, rename and delete, more on scroll.
+class _RekhuConversations extends StatefulWidget {
+  const _RekhuConversations({required this.chat, required this.accent, required this.wrap, this.onPicked});
+  final RekhuChatController chat;
+  final Color accent;
+
+  /// Puts a dialog in the chat's direction.
+  final Widget Function(Widget child) wrap;
+
+  /// Called after a conversation was picked or a new chat started; closes the list on a narrow screen.
+  final VoidCallback? onPicked;
+
+  @override
+  State<_RekhuConversations> createState() => _RekhuConversationsState();
+}
+
+class _RekhuConversationsState extends State<_RekhuConversations> {
+  late final _search = TextEditingController(text: widget.chat.conversationsQuery);
+  Timer? _typing;
+
+  @override
+  void dispose() {
+    _typing?.cancel();
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// Searches a moment after the user stops typing.
+  void _searchFor(String query) {
+    _typing?.cancel();
+    _typing = Timer(const Duration(milliseconds: 300), () => widget.chat.loadConversations(query: query));
+  }
+
+  /// The time for today, a short date otherwise, in the app's own date format.
+  String _when(BuildContext context, DateTime? at) {
+    if (at == null) return '';
+    final l = MaterialLocalizations.of(context);
+    final local = at.toLocal();
+    final now = DateTime.now();
+    if (local.year == now.year && local.month == now.month && local.day == now.day) {
+      return l.formatTimeOfDay(TimeOfDay.fromDateTime(local), alwaysUse24HourFormat: MediaQuery.maybeAlwaysUse24HourFormatOf(context) ?? false);
+    }
+    return local.year == now.year ? l.formatShortMonthDay(local) : l.formatShortDate(local);
+  }
+
+  /// Asks for a new name and saves it.
+  Future<void> _rename(RekhuConversation c) async {
+    final t = widget.chat.texts;
+    final field = TextEditingController(text: c.title);
+    final title = await showDialog<String>(
+      context: context,
+      builder: (context) => widget.wrap(AlertDialog(
+        title: Text(t.renameTitle),
+        content: TextField(
+          controller: field,
+          autofocus: true,
+          maxLength: 80,
+          decoration: InputDecoration(hintText: t.renameHint),
+          onSubmitted: (v) => Navigator.pop(context, v),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: Text(t.cancel)),
+          FilledButton(onPressed: () => Navigator.pop(context, field.text), child: Text(t.save)),
+        ],
+      )),
+    );
+    if (title == null) return;
+    try {
+      await widget.chat.renameConversation(c.id, title);
+    } catch (_) {/* the list keeps the old name */}
+  }
+
+  /// Asks before deleting for good.
+  Future<void> _delete(RekhuConversation c) async {
+    final t = widget.chat.texts;
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (context) => widget.wrap(AlertDialog(
+        title: Text(t.deleteTitle),
+        content: Text(t.deleteBody),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: Text(t.cancel)),
+          FilledButton(style: FilledButton.styleFrom(backgroundColor: const Color(0xFFDC2626)), onPressed: () => Navigator.pop(context, true), child: Text(t.delete)),
+        ],
+      )),
+    );
+    if (sure != true) return;
+    try {
+      await widget.chat.deleteConversation(c.id);
+    } catch (_) {/* it stays in the list */}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final chat = widget.chat;
+    final t = chat.texts;
+    final theme = Theme.of(context);
+    final list = chat.conversations;
+    final rows = list.length + (chat.conversationsLoading || chat.conversationsNext != null ? 1 : 0);
+
+    return Material(
+      color: theme.colorScheme.surface,
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(4, 8, 12, 4),
+              child: Row(children: [
+                IconButton(tooltip: t.conversations, onPressed: () => chat.showConversations(false), icon: const Icon(Icons.menu)),
+                Expanded(child: Text(t.conversations, style: theme.textTheme.titleSmall, overflow: TextOverflow.ellipsis)),
+                FilledButton.tonalIcon(
+                  onPressed: chat.sending
+                      ? null
+                      : () {
+                          chat.newChat();
+                          widget.onPicked?.call();
+                        },
+                  icon: const Icon(Icons.add, size: 18),
+                  label: Text(t.newConversation),
+                ),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsetsDirectional.fromSTEB(12, 4, 12, 8),
+              child: TextField(
+                controller: _search,
+                onChanged: _searchFor,
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(hintText: t.search, prefixIcon: const Icon(Icons.search, size: 20), isDense: true, border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))),
+              ),
+            ),
+            Expanded(
+              child: list.isEmpty && chat.conversationsLoaded && !chat.conversationsLoading
+                  ? Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(chat.conversationsQuery.isEmpty ? t.noConversations : t.nothingFound, style: theme.textTheme.bodySmall?.copyWith(color: theme.hintColor), textAlign: TextAlign.center),
+                    )
+                  : ListView.builder(
+                      itemCount: rows,
+                      itemBuilder: (context, i) {
+                        if (i >= list.length) {
+                          // the last row in view fetches the next page
+                          if (!chat.conversationsLoading) WidgetsBinding.instance.addPostFrameCallback((_) => chat.moreConversations());
+                          return const Padding(padding: EdgeInsets.all(12), child: Center(child: SizedBox.square(dimension: 20, child: CircularProgressIndicator(strokeWidth: 2))));
+                        }
+                        final c = list[i];
+                        final when = _when(context, c.updatedAt);
+                        return ListTile(
+                          key: ValueKey('rekhu-conversation-${c.id}'),
+                          dense: true,
+                          selected: c.id == chat.current,
+                          selectedColor: widget.accent,
+                          selectedTileColor: widget.accent.withAlpha(20),
+                          contentPadding: const EdgeInsetsDirectional.only(start: 16, end: 4),
+                          title: Text(c.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                          subtitle: Text([if (when.isNotEmpty) when, t.questionCount(c.questions)].join(' · '), maxLines: 1, overflow: TextOverflow.ellipsis),
+                          onTap: chat.sending
+                              ? null
+                              : () {
+                                  if (c.id != chat.current) chat.open(c.id);
+                                  widget.onPicked?.call();
+                                },
+                          trailing: PopupMenuButton<String>(
+                            tooltip: t.more,
+                            icon: const Icon(Icons.more_horiz),
+                            onSelected: (v) => v == 'rename' ? _rename(c) : _delete(c),
+                            itemBuilder: (context) => [
+                              PopupMenuItem(value: 'rename', child: widget.wrap(Text(t.rename))),
+                              PopupMenuItem(value: 'delete', child: widget.wrap(Text(t.delete))),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

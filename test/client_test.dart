@@ -121,4 +121,112 @@ void main() {
     expect(client.conversation, isNull);
     expect(await store.read('rekhu-assistant:conversation'), isNull);
   });
+
+  group('conversations', () {
+    Map<String, dynamic> item(String id, {String title = 'Where is my order?', int questions = 2}) =>
+        {'id': id, 'title': title, 'scope': null, 'updated_at': '2026-11-11T09:12:44+00:00', 'questions': questions};
+
+    test('the list comes in pages, searched, with the same headers as every call', () async {
+      final asked = <Uri>[];
+      final client = RekhuAssistantClient(
+        endpoint: endpoint,
+        locale: 'nl',
+        headers: () => {'Authorization': 'Bearer token-1'},
+        httpClient: MockClient((r) async {
+          asked.add(r.url);
+          expect(r.method, 'GET');
+          expect(r.headers['Authorization'], 'Bearer token-1');
+          expect(r.headers['X-Rekhu-Protocol'], '1');
+          expect(r.headers['Accept'], 'application/json');
+          final first = r.url.queryParameters['before'] == null;
+          return http.Response(jsonEncode({'conversations': [item(first ? 'c2' : 'c1')], if (first) 'next': 'cursor|c2'}), 200);
+        }),
+      );
+      final first = await client.conversations(query: ' order ', limit: 1);
+      expect(first.items.single.id, 'c2');
+      expect(first.items.single.questions, 2);
+      expect(first.items.single.updatedAt, DateTime.utc(2026, 11, 11, 9, 12, 44));
+      expect(first.next, 'cursor|c2');
+      final second = await client.conversations(query: 'order', before: first.next, limit: 1);
+      expect(second.items.single.id, 'c1');
+      expect(second.next, isNull);
+
+      expect(asked[0].path, '/rekhu/assistant/chat/conversations');
+      expect(asked[0].queryParameters, {'limit': '1', 'q': 'order'});
+      expect(asked[1].queryParameters, {'limit': '1', 'before': 'cursor|c2', 'q': 'order'});
+    });
+
+    test('rename sends the title and gives back the item', () async {
+      late http.Request seen;
+      final client = RekhuAssistantClient(endpoint: endpoint, httpClient: MockClient((r) async {
+        seen = r;
+        return http.Response(jsonEncode({'conversation': item('c1', title: 'Order questions')}), 200);
+      }));
+      final renamed = await client.renameConversation('c1', ' Order questions ');
+      expect(seen.method, 'PATCH');
+      expect(seen.url.path, '/rekhu/assistant/chat/conversations/c1');
+      expect(jsonDecode(seen.body), {'title': 'Order questions'});
+      expect(renamed.title, 'Order questions');
+    });
+
+    test('renaming one that is gone fails with 404', () async {
+      final client = RekhuAssistantClient(endpoint: endpoint, httpClient: MockClient((r) async => http.Response('{}', 404, headers: {'content-type': 'application/json'})));
+      expect(() => client.renameConversation('gone', 'x'), throwsA(isA<RekhuException>().having((e) => e.status, 'status', 404)));
+    });
+
+    test('delete removes it by id and forgets it when it is the open one', () async {
+      final store = RekhuMemoryStore();
+      await store.write('rekhu-assistant:conversation', 'c1');
+      final calls = <String>[];
+      final client = RekhuAssistantClient(endpoint: endpoint, store: store, httpClient: MockClient((r) async {
+        calls.add('${r.method} ${r.url.path}');
+        return http.Response('', 204);
+      }));
+      await client.deleteConversation('c2');
+      expect(client.conversation, 'c1');
+      await client.deleteConversation('c1');
+      expect(client.conversation, isNull);
+      expect(calls, ['DELETE /rekhu/assistant/chat/conversations/c2', 'DELETE /rekhu/assistant/chat/conversations/c1']);
+    });
+
+    test('a new chat forgets the id here only and deletes nothing', () async {
+      final store = RekhuMemoryStore();
+      await store.write('rekhu-assistant:conversation', 'old');
+      final calls = <String>[];
+      final bodies = <Map<String, dynamic>>[];
+      final client = RekhuAssistantClient(
+        endpoint: endpoint,
+        store: store,
+        httpClient: streaming(sse([{'type': 'start', 'conversation': 'new', 'protocol': 1}, {'type': 'done'}]), seen: (r, body) {
+          calls.add(r.method);
+          bodies.add(jsonDecode(body) as Map<String, dynamic>);
+        }),
+      );
+      await client.newChat();
+      expect(client.conversation, isNull);
+      expect(await store.read('rekhu-assistant:conversation'), isNull);
+      await client.send('hi').toList();
+      expect(calls, ['POST']);
+      expect(bodies.single['conversation'], isNull);
+      expect(client.conversation, 'new');
+    });
+
+    test('open loads that conversation and goes on in it', () async {
+      final asked = <String?>[];
+      final client = RekhuAssistantClient(endpoint: endpoint, httpClient: MockClient((r) async {
+        asked.add(r.url.queryParameters['conversation']);
+        return http.Response(jsonEncode({'conversation': 'c7', 'history': true, 'messages': [{'role': 'user', 'text': 'Earlier question'}]}), 200);
+      }));
+      final h = await client.open('c7');
+      expect(asked, ['c7']);
+      expect(client.conversation, 'c7');
+      expect(h.messages.single.text, 'Earlier question');
+      expect(h.history, isTrue);
+    });
+
+    test('the history flag is false when the server has no list', () async {
+      final client = RekhuAssistantClient(endpoint: endpoint, visitor: true, httpClient: MockClient((r) async => http.Response('{"messages":[]}', 200)));
+      expect((await client.history()).history, isFalse);
+    });
+  });
 }

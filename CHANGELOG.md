@@ -2,6 +2,15 @@
 
 All notable changes to `rekhu_assistant`. Versions follow [semantic versioning](https://semver.org).
 
+## 0.2.0 · 11 November 2026
+
+- **Conversation history.** A signed-in user sees their earlier conversations in a list next to the chat: open one and go on in it, search, rename and delete. On a phone the list covers the chat and closes after a pick. It works right to left in Arabic. The public chat for visitors has no list.
+- **New chat keeps the old one.** "New" now starts a new conversation without deleting the one before; deleting is its own action in the list.
+- `RekhuAssistantClient`: `conversations()` (in pages, with search), `renameConversation()`, `deleteConversation()`, `open()` and `newChat()`. `RekhuHistory.history` says whether the user has a list.
+- `RekhuChatController`: the list as state (`conversations`, `conversationsLoading`, `conversationsNext`, `conversationsQuery`), `loadConversations()`, `moreConversations()`, `open()`, `renameConversation()`, `deleteConversation()`, `newChat()` and `showConversations()`. The list is fetched again after each answer.
+- New words for the list in English, Arabic and Dutch, all of them in `RekhuTexts`.
+- `RekhuChatController.reset()` is deprecated: use `newChat()`. It no longer deletes the conversation. `client.forget()` still deletes the current one.
+
 ## 0.1.1 · 27 October 2026
 
 - **Start free.** The README says how to begin: [create a Rekhu account](https://rekhu.com/register?ref=assistant-flutter) and it starts with $10 credit, no card needed, with links to the docs and pricing.

@@ -36,6 +36,7 @@ class RekhuMemoryStore implements RekhuStore {
 /// );
 /// final history = await client.history();             // greeting, quick questions, earlier messages
 /// await for (final event in client.send('Where is my order?')) { … }
+/// final page = await client.conversations();          // the user's earlier conversations, when history.history
 /// ```
 class RekhuAssistantClient {
   RekhuAssistantClient({
@@ -178,7 +179,68 @@ class RekhuAssistantClient {
     }
   }
 
-  /// Forgets the conversation on the server and here; the next message starts a new one.
+  /// Starts a new chat: forgets the current conversation here only, so it stays in the list; the next message
+  /// starts a new one.
+  Future<void> newChat() async {
+    await _restore();
+    await _keep(null);
+  }
+
+  /// Opens an earlier conversation: it becomes the current one, and its messages come back as with [history].
+  Future<RekhuHistory> open(String id) async {
+    await _restore();
+    await _keep(id);
+    return history();
+  }
+
+  /// The address of the conversations list, or of one conversation in it, next to the chat's own.
+  Uri _conversationsUri([String? id, Map<String, String> query = const {}]) {
+    final base = endpoint.path.endsWith('/') ? endpoint.path.substring(0, endpoint.path.length - 1) : endpoint.path;
+    final params = {...endpoint.queryParameters, ...query};
+    return endpoint.replace(path: '$base/conversations${id == null ? '' : '/${Uri.encodeComponent(id)}'}', queryParameters: params.isEmpty ? null : params);
+  }
+
+  /// One page of the user's earlier conversations, newest first: [query] searches titles and questions, [before] is the
+  /// [RekhuConversationPage.next] of the page before.
+  Future<RekhuConversationPage> conversations({String? query, String? before, int limit = 30}) async {
+    final uri = _conversationsUri(null, {
+      'limit': '${limit.clamp(1, 100)}',
+      if (before != null && before.isNotEmpty) 'before': before,
+      if (query != null && query.trim().isNotEmpty) 'q': query.trim(),
+    });
+    final response = await _http.get(uri, headers: await _headers('application/json'));
+    if (response.statusCode != 200) throw await _failure(response, response.body);
+    try {
+      return RekhuConversationPage.fromJson(jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>);
+    } on FormatException {
+      throw RekhuException(_texts.unavailable, status: response.statusCode);
+    }
+  }
+
+  /// Names a conversation; an empty [title] goes back to its first question. A conversation that is gone throws a
+  /// [RekhuException] with status 404.
+  Future<RekhuConversation> renameConversation(String id, String title) async {
+    final response = await _http.patch(_conversationsUri(id), headers: await _headers('application/json'), body: jsonEncode({'title': title.trim()}));
+    if (response.statusCode != 200) throw await _failure(response, response.body);
+    try {
+      final json = jsonDecode(utf8.decode(response.bodyBytes)) as Map<String, dynamic>;
+      return RekhuConversation.fromJson(Map<String, dynamic>.from(json['conversation'] as Map));
+    } catch (_) {
+      throw RekhuException(_texts.unavailable, status: response.statusCode);
+    }
+  }
+
+  /// Deletes a conversation for good; when it is the current one, the next message starts a new one. One that is
+  /// already gone counts as deleted.
+  Future<void> deleteConversation(String id) async {
+    await _restore();
+    final response = await _http.delete(_conversationsUri(id), headers: await _headers('application/json'));
+    if (response.statusCode >= 300 && response.statusCode != 404) throw await _failure(response, response.body);
+    if (_conversation == id) await _keep(null);
+  }
+
+  /// Deletes the current conversation on the server and forgets it here; the next message starts a new one. For a
+  /// new chat that keeps the old one in the list, use [newChat].
   Future<void> forget() async {
     await _restore();
     final id = _conversation;

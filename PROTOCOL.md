@@ -15,8 +15,10 @@ One URL, chosen by the app (for example `/rekhu/assistant/chat`), with three met
 | Method | Does |
 |---|---|
 | `POST` | one turn: the user's message or their click on Confirm; answered as a stream of events |
-| `GET ?conversation=…` | what the user saw of a conversation, to show it again after a reload |
-| `DELETE` | forgets a conversation ("New") |
+| `GET ?conversation=…` | what the user saw of a conversation, to show it again after a reload or when it is opened from the list |
+| `DELETE` | deletes a conversation |
+
+And, for a chat with a list of earlier conversations, `<endpoint>/conversations` (see "Conversations" below).
 
 ## Who is talking
 
@@ -57,8 +59,10 @@ Request, `Content-Type: application/json`, `Accept: text/event-stream`:
 | `conversation` | the id from an earlier `start` event; empty or absent starts a new conversation |
 | `confirm` | the `id` of a confirm card the user clicked, instead of a message |
 | `locale` | the language the user reads (BCP 47, for example `en-GB`, `nl-NL`); the answer is in that language |
+| `scope` | optional: a chat of its own the server has (a marketplace chat next to the main one); its conversations are its own |
+| `files[]` | optional: files the user attaches. The request is then `multipart/form-data` with the other fields as form fields |
 
-One of `message` and `confirm` is required; neither is `422`. Too many turns in a short time is `429`.
+One of `message`, `confirm` and `files[]` is required; none is `422`. Too many turns in a short time is `429`.
 
 The answer is `200` with `Content-Type: text/event-stream`. Each event is one block:
 
@@ -72,14 +76,15 @@ The `data` line is JSON and always repeats the event's `type`. The events, in th
 
 | `type` | Fields | Meaning |
 |---|---|---|
-| `start` | `conversation`, `protocol` | always first; keep `conversation` and send it with the next turn |
+| `start` | `conversation`, `protocol`, `files?` | always first; keep `conversation` and send it with the next turn. `files`: the files sent with this turn as the server kept them, each `{ id, name, about }` (`about` says what it is: type, size, pages, page size, pixels, dpi, colour); a zip is followed by the files it held |
 | `text` | `text` | a piece of the answer; append it to the current answer bubble |
 | `step` | `label` | the assistant is doing something ("Looking in the help", an action's name); ends when any next event comes |
 | `card` | `kind`, … | something to show or click; see below |
+| `debug` | `action`, `input`, `ok`, `ms`, `result?`, `error?`, `errors?` | for developers: one action the assistant ran; only when debug is on, see below |
 | `error` | `message` | the turn could not finish; show `message` to the user as it is |
-| `done` | | always last when the turn finished |
+| `done` | `message?` | always last when the turn finished; `message` is the id of the answer just given (`"m_7"`), when it has words the user sees |
 
-A `text` after a `step` or a `card` starts a new answer bubble.
+A `text` after a `step` or a `card` starts a new answer bubble. All the bubbles of one turn are still one answer with one id: the history returns them as one message, and a report names that id.
 
 ### Cards
 
@@ -89,6 +94,35 @@ A `text` after a `step` or a `card` starts a new answer bubble.
 | `confirm` | `id`, `title`, `input`, `danger` | the action and the input it will run with, a Confirm and a Cancel button; `danger` is a destructive action |
 | `done` | `title`, `message?`, `url?` | an action ran; the app's data changed |
 | `failed` | `title`, `message` | an action was refused or failed; `message` says why |
+| `file` | `title`, `name`, `url`, `size` | an action handed over a file: a download button with the file `name` and its `size` in bytes |
+| any other | `data`, `title?` | a card of the app's own kind (a price, a wizard step): drawn by the app's renderer for that kind. Without one, a client shows `title`, `data.text`, `data.rows` (`{ label, value }`), `data.image` (a picture as a `data:image/png`, `jpeg` or `webp` URL only, never an address) and `data.buttons` (`{ label, message }`, which send `message` as the user's next message). The knowers' cards are of this kind: `seshat` (a print file's check or proof) |
+
+**Files.** `url` is a signed link the server package made for this user: it works for a short time and needs no login, so a client opens it as a plain download (`<a href download target="_blank">`), never through the app's router. `title` says what the file is ("Your transactions"), `name` is the file name with its extension (`transactions.xlsx`).
+
+```json
+{"type": "card", "kind": "file", "title": "Your transactions", "name": "transactions.xlsx", "url": "https://api.example.com/rekhu/assistant/files/f_1?expires=…&signature=…", "size": 12345}
+```
+
+### Debug
+
+When the server package's debug setting is on (for example in a local or development environment), it sends one `debug` event per action the assistant ran, as the action finishes: during the answer, before its text or between its parts. It sends them only to signed-in users, never on the public chat for visitors, and never when debug is off.
+
+| Field | |
+|---|---|
+| `action` | the action's name |
+| `input` | the input it ran with |
+| `ok` | `false` when it was refused or failed |
+| `ms` | how long it took, in milliseconds |
+| `result` | when it ran: the JSON the assistant read, as a string, cut to 2000 characters (so not always valid JSON) |
+| `error` | when it failed: why, as the assistant was told |
+| `errors` | optional, when it failed on validation: the errors per field |
+
+```json
+{"type": "debug", "action": "list_orders", "input": {"status": "open"}, "ok": true, "ms": 120, "result": "{\"orders\": [{\"id\": 1001, \"status\": \"open\"}]}"}
+{"type": "debug", "action": "show_order", "input": {"order": 99}, "ok": false, "ms": 33, "error": "that record does not exist, or the user cannot see it"}
+```
+
+A `debug` event does not start a new answer bubble and does not end a `step`. The history does not keep it. A client may ignore it; one that shows it escapes every text in it.
 
 **Confirming.** Nothing runs when the confirm card is shown. The server package keeps the action and its exact input on the server under `id`. Only a `POST` with `"confirm": "<id>"` runs it, with that stored input; a typed "yes", or an id the server package did not issue to this user in this conversation, runs nothing. Cancel is an ordinary message ("No, cancel that.").
 
@@ -109,13 +143,19 @@ A `text` after a `step` or a `card` starts a new answer bubble.
 {
   "conversation": "8f3a…",
   "messages": [
-    { "role": "user", "text": "What did I order last?" },
-    { "role": "bot", "text": "Your last order was **ORD-1001** …" }
-  ]
+    { "id": "m_1", "role": "user", "text": "What did I order last?" },
+    { "id": "m_2", "role": "bot", "text": "Your last order was **ORD-1001** …" }
+  ],
+  "report": {
+    "reasons": [{ "key": "wrong_answer", "label": "The answer is wrong" }, { "key": "other", "label": "Something else" }],
+    "max_comment": 1000
+  }
 }
 ```
 
-Only what the user saw: their messages and the answers (markdown), at most the last 30, without the tool traffic and without cards.
+Only what the user saw: their messages and the answers (markdown), at most the last 30, without the tool traffic and without cards. Each message has an `id`, the same for the life of the conversation, also after its oldest turns are dropped; an answer that came in several bubbles is one message.
+
+`report` is there when the user may report answers (see below): the reasons to offer, in the user's language, and the longest comment. A client builds its form from it and never hard-codes the reasons.
 
 Without `conversation`, the answer has no messages. Either way it may carry `"greeting"`: the server's first message (markdown) in the user's language (`Accept-Language`), which a client shows when the app gave it none of its own. A client asks for it once, when the chat opens.
 
@@ -131,14 +171,105 @@ Without `conversation`, it may also carry `"quick"`: the developer's quick quest
 
 When a request fails before the stream starts (4xx or 5xx), a JSON body may carry `"message"`: what to tell the user, in their language. A client shows it instead of its own words.
 
-## DELETE: start over
+## POST …/report: report a problem with an answer
 
-`DELETE <endpoint>` with `{"conversation": "8f3a…"}` forgets that conversation. Answers `204`.
+`POST <endpoint>/report` (the endpoint's path with `/report` added, before any query string), `Content-Type: application/json`, with the same headers and sign-in as the chat:
+
+```json
+{
+  "conversation": "8f3a…",
+  "message": "m_2",
+  "reason": "wrong_answer",
+  "comment": "My last order was ORD-1002",
+  "locale": "en-GB"
+}
+```
+
+| Field | |
+|---|---|
+| `conversation` | the user's own conversation |
+| `message` | the id of the answer, from the history or the `done` event |
+| `reason` | a `key` from the history's `report.reasons` |
+| `comment` | optional: what the user expected instead, at most `report.max_comment` characters |
+| `locale` | optional: the language the user reads |
+
+The client sends only the id, never the answer's text: the server package reads the question, the answer and what led to it from the conversation it kept itself.
+
+| Answer | |
+|---|---|
+| `201` | `{"message": "Thanks, we will look into it."}`: the thank-you to show, in the user's language |
+| `404` | the conversation or the answer is not this user's |
+| `422` | a reason that is not offered, or a comment that is too long; `errors` per field |
+| `429` | too many reports; `message` says so |
+
+A second report on the same answer by the same user replaces the first. The user is thanked even when the report could not be passed on at once; the server package tries again.
+
+## Conversations: the list, opening, renaming, deleting
+
+A signed-in user's conversations are kept, so a chat can show them in a list (a sidebar) and open an earlier one. The GET of the chat says whether the caller has one: `"history": true` (in the answer with and without `conversation`). The public chat has no list; there `history` is absent.
+
+### GET …/conversations
+
+`GET <endpoint>/conversations?scope=&limit=&before=&q=`, `Accept: application/json`:
+
+```json
+{
+  "conversations": [
+    { "id": "8f3a…", "title": "Where is my last order?", "scope": null, "updated_at": "2026-11-11T09:12:44+00:00", "questions": 3 }
+  ],
+  "next": "2026-11-02T16:40:01+00:00|5c1e…"
+}
+```
+
+| Parameter | |
+|---|---|
+| `scope` | the chat of its own (see `POST`); without it, the main chat |
+| `limit` | how many, 1 to 100; 30 by default |
+| `before` | the `next` of the page before, for the next page; `next` is absent on the last page |
+| `q` | search: conversations whose title or questions contain it, ignoring case |
+
+Newest first. `title` is the name the user gave it, else the first thing they asked. `questions` is how many messages the user sent. A client treats `next` as opaque.
+
+### PATCH …/conversations/{id}: rename
+
+`PATCH <endpoint>/conversations/8f3a…` with `{"title": "Order questions"}` names it (at most 80 characters); an empty title goes back to the first question. Answers `200` with `{ "conversation": { … } }`, the item as the list shows it. Another user's id, or one that is no longer kept: `404`.
+
+### DELETE …/conversations/{id}: delete
+
+`DELETE <endpoint>/conversations/8f3a…` deletes it for good. Answers `204`. The same as `DELETE <endpoint>` with `{"conversation": "8f3a…"}`, which the public chat uses.
+
+### Opening and starting
+
+A conversation from the list opens with `GET <endpoint>?conversation=…`, and the user goes on in it by sending `conversation` with the next `POST`. A new chat sends its first `POST` without `conversation`: the earlier one stays in the list. Deleting is only for a conversation the user wants gone.
+
+How long conversations are kept is the server package's setting; one that is no longer kept leaves the list.
 
 ## Text
 
-Answers are a small markdown: paragraphs, `-` and `1.` lists, `**bold**`, `*italics*`, `` `code` `` and links `[label](url)` to `http(s)://` or to the app's own paths. A client renders nothing else as HTML.
+Answers are a small markdown: paragraphs, `-` and `1.` lists, tables between pipes, `**bold**`, `*italics*`, `` `code` ``, fenced code blocks, charts and links `[label](url)` to `http(s)://` or to the app's own paths. A client renders nothing else as HTML.
+
+### Charts
+
+A fenced block with the language `chart` holds one chart as JSON:
+
+````
+```chart
+{"type": "bar", "title": "Revenue per month", "unit": "€", "labels": ["Jan", "Feb"], "series": [{"name": "2026", "data": [1200.5, 980]}]}
+```
+````
+
+| Field | |
+|---|---|
+| `type` | `bar`, `line`, `area`, `pie` or `donut` |
+| `title` | optional |
+| `unit` | optional: what the values are in (`€`, `orders`) |
+| `labels` | one per value |
+| `series` | at least one `{ "name", "data" }`; `data` holds numbers only. `pie` and `donut` use the first series, with no negative values |
+
+A client that draws charts escapes every text in them. A block that is not valid JSON, has an unknown type or no data is shown as an ordinary code block. While an answer streams, a client waits for the closing fence before drawing, rather than showing the JSON. A client that does not draw charts shows the block as code. The history returns the block as part of the answer's text.
 
 ## Changes
 
 A server package and the widget agree on the version with `X-Rekhu-Protocol` and the `start` event's `protocol`. New optional fields and new card kinds can come within version 1; a client ignores what it does not know. Anything that breaks an existing client is version 2.
+
+Within version 1: the conversations list gained `questions`, `before`, `next` and `q`, renaming and deleting by id, and the GET's `history` (assistant-laravel 0.14, assistant-node 0.8, widget 0.8, rekhu_assistant 0.2).
